@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #121316;
+  --color-card: #1c1e24;
+  --color-ink: #f9fafb;
+  --color-muted: #d6d3d1;
+  --color-line: #5c4a28;
+  --color-red: #8e1b1b;
+  --color-brass: #e6a23c;
+  --color-brass-soft: #2a2116;
+  --font-sans: "Atkinson Hyperlegible", "Gill Sans", "Trebuchet MS", sans-serif;
+  --font-display: "Fraunces", "Palatino Linotype", Palatino, "Book Antiqua", serif;
+  --text-body: 1.375rem;
+  --text-body--line-height: 1.5;
+  --text-question: 2.125rem;
+  --text-question--line-height: 1.35;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    overflow-x: hidden;
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 1.25rem;
+    line-height: 1.5;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+    color: inherit;
+    touch-action: manipulation;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--color-brass);
+    outline-offset: 3px;
+  }
+}
+
+@layer components {
+  .display-heavy {
+    font-weight: 680;
+  }
+
+  .dock {
+    flex-shrink: 0;
+    background: var(--color-paper);
+    border-top: 2px solid var(--color-brass);
+    padding: 1rem 1.25rem max(1rem, env(safe-area-inset-bottom));
+  }
+
+  .listen-ring {
+    animation: listen-pulse 1.6s ease-in-out infinite;
+  }
+}
+
+/* Theme fixes that the old light tokens cannot express. Unlayered so they win
+   over Tailwind utilities: amber borders, a deep red record control, light
+   words on that red, and a dark sheet behind dialogs. */
+.border-ink,
+.border-line,
+.border-brass {
+  border-color: #e6a23c;
+}
+
+.bg-red {
+  background-color: #8e1b1b;
+  color: #f9fafb;
+}
+
+.bg-ink\/50 {
+  background-color: rgb(18 19 22 / 0.72);
+}
+
+.text-sm,
+.text-base,
+.text-lg {
+  font-size: 1.25rem;
+  line-height: 1.45;
+}
+
+button.min-h-16,
+button.min-h-24,
+label.min-h-16 {
+  min-height: 64px;
+}
+
+@keyframes listen-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.4;
+  }
+  50% {
+    transform: scale(1.28);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .listen-ring {
+    animation: none;
+    opacity: 0.35;
+  }
+}
