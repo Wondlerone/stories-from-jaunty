@@ -28,7 +28,7 @@ export function micMessage(err: unknown): string {
       ? String((err as { message: string }).message)
       : "";
   if (name === "NotAllowedError" || name === "SecurityError") {
-    return "Safari did not ask. This may be because the microphone is switched off for Safari itself: Settings, Privacy & Security, Microphone, switch Safari on. It may instead be this website: Settings, Apps, Safari, Microphone, leave Ask ticked, and delete this website if it is listed as Deny. Then tap Record again. If both are already right, this page cannot use the microphone from here.";
+    return "Safari did not ask. Switching Chrome on does not change Safari. In Settings, tap Apps, then Safari, then Microphone. Ask should be ticked, and this website should not be listed as Deny. If that is already so, Safari is refusing this page, and Record cannot force it to ask.";
   }
   if (name === "NotFoundError" || name === "OverconstrainedError") {
     return "No microphone was found on this iPhone.";
