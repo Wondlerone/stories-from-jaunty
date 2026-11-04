@@ -10,7 +10,7 @@ const BAR_GATES = [0.12, 0.28, 0.45, 0.62, 0.8];
 const BAR_HEIGHTS = ["h-3", "h-5", "h-8", "h-10", "h-12"];
 
 function takeIsEmpty(take: Take) {
-  return !take.heard && take.blob.size < 1200;
+  return take.blob.size < 1200;
 }
 
 export function TellView({
@@ -37,6 +37,7 @@ export function TellView({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [empty, setEmpty] = useState(false);
+  const [readNote, setReadNote] = useState<string | null>(null);
   const [intent, setIntent] = useState<"back" | "pass" | "choose" | null>(null);
   const [confirmDrop, setConfirmDrop] = useState(false);
   const savedOnce = useRef(false);
@@ -46,6 +47,33 @@ export function TellView({
 
   const recorder = useRecorder((take) => {
     void persistRef.current(take, true);
+  });
+
+  const recordRef = useRef<HTMLButtonElement>(null);
+  const askRef = useRef<() => void>(() => {});
+  askRef.current = () => {
+    if (!recorder.claim()) return;
+    let asked: Promise<MediaStream>;
+    try {
+      const media = navigator.mediaDevices?.getUserMedia;
+      asked = media
+        ? media.call(navigator.mediaDevices, { audio: true })
+        : Promise.reject(new DOMException("Not allowed", "NotAllowedError"));
+    } catch (err) {
+      asked = Promise.reject(err);
+    }
+    setEmpty(false);
+    setReadNote(null);
+    recorder.clearError();
+    void recorder.start(asked, null);
+  };
+
+  useEffect(() => {
+    const button = recordRef.current;
+    if (!button) return;
+    const onClick = () => askRef.current();
+    button.addEventListener("click", onClick);
+    return () => button.removeEventListener("click", onClick);
   });
 
   const dirty = recorder.phase !== "idle" || held !== null || saving;
@@ -88,9 +116,7 @@ export function TellView({
     } catch {
       savedOnce.current = false;
       setSaving(false);
-      setSaveError(
-        "This was not sent. Please stay on this page and press I've finished again. It is not kept on this phone.",
-      );
+      setSaveError("This was not sent. It is still on this screen. Press I've finished again.");
     }
   }
 
@@ -115,7 +141,10 @@ export function TellView({
   async function onFinish() {
     hush();
     const take = held ?? (await recorder.finish());
-    if (!take) return;
+    if (!take) {
+      setSaveError("The recording was not kept. Tap Record and try again.");
+      return;
+    }
     await persist(take, false);
   }
 
@@ -231,22 +260,7 @@ export function TellView({
             </>
           ) : (
             <>
-              <button
-                type="button"
-                onClick={() => {
-                  hush();
-                  setEmpty(false);
-                  recorder.clearError();
-                  void recorder.start();
-                }}
-                className="relative mx-auto grid h-44 w-44 place-items-center rounded-full bg-red text-2xl font-bold text-paper"
-              >
-                <span className="pointer-events-none absolute inset-3 rounded-full border-4 border-paper" />
-                Record
-              </button>
-              <p className="text-center text-2xl">
-                Press once. You do not need to hold it down.
-              </p>
+              <p className="text-center text-2xl">Tap Record once. Do not hold it down.</p>
               <BigButton tone="quiet" onClick={() => request("pass")}>
                 I'd rather not answer this one
               </BigButton>
@@ -265,11 +279,29 @@ export function TellView({
         </p>
       </div>
       <h2 className="mt-4 text-question font-bold">{question.text}</h2>
+      {recording ? null : (
+        <button
+          ref={recordRef}
+          type="button"
+          className="mt-6 min-h-24 w-full rounded-2xl bg-red px-5 py-5 text-3xl font-bold text-paper"
+        >
+          Record
+        </button>
+      )}
+      {recording ? null : recorder.error ? (
+        <p role="alert" className="mt-4 rounded-2xl border-2 border-brass bg-brass-soft p-4 text-2xl">
+          {recorder.error}
+        </p>
+      ) : (
+        <p className="mt-3 text-center text-2xl">The iPhone will ask. Tap Allow.</p>
+      )}
       {current ? (
         <figure className="mx-auto mt-6 max-w-xl border border-line bg-card p-3">
           <img
             src={current.url}
             alt={current.caption || "A photograph to help with this question"}
+            draggable={false}
+            onContextMenu={(event) => event.preventDefault()}
             className="max-h-72 w-full bg-brass-soft object-contain"
           />
           {current.caption ? (
@@ -308,10 +340,17 @@ export function TellView({
         <div className="mt-6 flex flex-col gap-3">
           <BigButton
             tone="brass"
-            onClick={() => speak([question.text, current?.caption].filter(Boolean).join(". "))}
+            onClick={() => {
+              setReadNote(null);
+              speak([question.text, current?.caption].filter(Boolean).join(". "), {
+                onFail: () =>
+                  setReadNote("I cannot read this aloud here. Please read the words on the screen."),
+              });
+            }}
           >
             Read this question to me
           </BigButton>
+          {readNote ? <p className="text-2xl">{readNote}</p> : null}
           <BigButton tone="quiet" onClick={() => request("choose")}>
             Choose a different question
           </BigButton>

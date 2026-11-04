@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { BigButton, Page, hush, speak } from "@/components/bits";
-import { micMessage } from "@/lib/use-recorder";
 
 type Phase = "listen" | "thanks";
 
@@ -78,8 +77,10 @@ export function StoryAbout({
 
   function begin() {
     const Ctor = recognitionCtor();
-    if (!Ctor) return;
-    hush();
+    if (!Ctor) {
+      setNote("This iPhone cannot take a spoken title. Type it in the box.");
+      return;
+    }
     setNote(null);
     heardRef.current = "";
     setLive("");
@@ -101,25 +102,26 @@ export function StoryAbout({
       if (event.error === "aborted" || event.error === "no-speech") return;
       keepRef.current = false;
       setListening(false);
-      setNote(micMessage({ name: event.error === "not-allowed" ? "NotAllowedError" : event.error }));
+      setNote(
+        event.error === "not-allowed"
+          ? "Safari is not asking. Open the Settings app, tap Apps, tap Safari, tap Microphone, and tap Ask."
+          : "The iPhone did not hear the title. Tap Record again, or type it.",
+      );
     };
     rec.onend = () => {
-      if (!keepRef.current) return;
-      try {
-        rec.start();
-      } catch {
-        keepRef.current = false;
-        setListening(false);
-      }
+      keepRef.current = false;
+      setListening(false);
     };
     recRef.current = rec;
     keepRef.current = true;
     try {
       rec.start();
       setListening(true);
+      hush();
     } catch {
       keepRef.current = false;
-      setNote("This device could not hear you. Please check the microphone, then press the red Record button again.");
+      setListening(false);
+      setNote("The iPhone did not hear the title. Tap Record again, or type it.");
     }
   }
 

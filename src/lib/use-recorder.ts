@@ -10,6 +10,10 @@ export type Take = {
 
 function pickMime(): string {
   if (typeof MediaRecorder === "undefined") return "";
+  const ios =
+    /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  if (ios) return "audio/mp4";
   const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/aac"];
   return types.find((type) => MediaRecorder.isTypeSupported(type)) ?? "";
 }
@@ -19,22 +23,32 @@ export function micMessage(err: unknown): string {
     err && typeof err === "object" && "name" in err
       ? String((err as { name: string }).name)
       : "";
+  const detail =
+    err && typeof err === "object" && "message" in err
+      ? String((err as { message: string }).message)
+      : "";
   if (name === "NotAllowedError" || name === "SecurityError") {
-    return "I cannot hear you yet. If you are asked, press Allow, then press the red Record button again. If you are not asked, the microphone is switched off.";
+    if (/AVAudioSession|capture device/i.test(detail)) {
+      return "The iPhone could not open the microphone. Close Safari completely, open it again, and tap Record.";
+    }
+    return detail
+      ? `Safari did not ask. ${detail}`
+      : "Safari did not ask. On the Microphone page, if this website is listed above Ask, tap Edit and delete it. Then tap Record.";
   }
   if (name === "NotFoundError" || name === "OverconstrainedError") {
-    return "No microphone was found on this device.";
+    return "No microphone was found on this iPhone.";
   }
-  return "This device could not hear you. Please check the microphone, then press the red Record button again.";
+  return detail || "The recording did not start. Tap Record again.";
 }
 
 export function useRecorder(onAutoSave: (take: Take) => void) {
-  const [phase, setPhase] = useState<"idle" | "recording" | "saving">("idle");
+  const [phase, setPhase] = useState<"idle" | "opening" | "recording" | "saving">("idle");
   const [elapsedMs, setElapsedMs] = useState(0);
   const [level, setLevel] = useState(0);
   const [heard, setHeard] = useState(false);
   const [silencePrompt, setSilencePrompt] = useState<SilencePrompt | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [blocked, setBlocked] = useState(false);
 
   const onAutoSaveRef = useRef(onAutoSave);
   onAutoSaveRef.current = onAutoSave;
@@ -55,6 +69,12 @@ export function useRecorder(onAutoSave: (take: Take) => void) {
   const levelRef = useRef(0);
   const aliveRef = useRef(true);
   const ignoreSaveRef = useRef(false);
+
+  function claim() {
+    if (startingRef.current || finishingRef.current || recRef.current) return false;
+    startingRef.current = true;
+    return true;
+  }
 
   function stopTracks() {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -84,7 +104,15 @@ export function useRecorder(onAutoSave: (take: Take) => void) {
 
   function finish(): Promise<Take | null> {
     const recorder = recRef.current;
-    if (!recorder || recorder.state === "inactive") return Promise.resolve(null);
+    if (!recorder || recorder.state === "inactive") {
+      recRef.current = null;
+      stopTracks();
+      if (aliveRef.current) {
+        setPhase("idle");
+        setError("The recording stopped before it could be kept. Tap Record and try again.");
+      }
+      return Promise.resolve(null);
+    }
     if (stopWaitRef.current) return stopWaitRef.current;
     finishingRef.current = true;
     setPhase("saving");
@@ -94,7 +122,7 @@ export function useRecorder(onAutoSave: (take: Take) => void) {
     const spoke = heardRef.current;
     stopWaitRef.current = new Promise((resolve) => {
       recorder.onstop = () => {
-        const mime = recorder.mimeType || "audio/webm";
+        const mime = recorder.mimeType || pickMime() || "audio/mp4";
         const blob = new Blob(chunksRef.current, { type: mime });
         stopTracks();
         recRef.current = null;
@@ -118,62 +146,84 @@ export function useRecorder(onAutoSave: (take: Take) => void) {
         recRef.current = null;
         stopWaitRef.current = null;
         finishingRef.current = false;
-        if (aliveRef.current) setPhase("idle");
+        if (aliveRef.current) {
+          setPhase("idle");
+          setError("The recording could not be kept. Tap Record and try again.");
+        }
         resolve(null);
       }
     });
     return stopWaitRef.current;
   }
 
-  async function start() {
+  async function start(alreadyAsked?: Promise<MediaStream>, audioCtx?: AudioContext | null) {
+    if (!startingRef.current && !claim()) return;
+    if (typeof MediaRecorder === "undefined" || (!alreadyAsked && !navigator.mediaDevices?.getUserMedia)) {
+      startingRef.current = false;
+      setError("This browser cannot record.");
+      setPhase("idle");
+      return;
+    }
     setError(null);
-    if (startingRef.current || finishingRef.current || recRef.current) return;
-    startingRef.current = true;
+    let pending: Promise<MediaStream>;
     try {
-      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-        setError(
-          "I cannot hear you from here. Please ask someone to help, then press the red Record button again.",
-        );
-        return;
-      }
+      pending = alreadyAsked ?? navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      startingRef.current = false;
+      setBlocked(true);
+      setError(micMessage(err));
+      setPhase("idle");
+      return;
+    }
+    try {
       let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true },
-        });
+        stream = await pending;
       } catch (err) {
+        if (!aliveRef.current) return;
+        const name =
+          err && typeof err === "object" && "name" in err
+            ? String((err as { name: string }).name)
+            : "";
+        if (name === "NotAllowedError" || name === "SecurityError") setBlocked(true);
         setError(micMessage(err));
+        setPhase("idle");
         return;
       }
       if (!aliveRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
+      stream.getTracks().forEach((track) => {
+        track.onended = () => {
+          if (!aliveRef.current || finishingRef.current) return;
+          recRef.current = null;
+          stopTracks();
+          setPhase("idle");
+          setError("The microphone stopped. Tap Record and try again.");
+        };
+      });
       streamRef.current = stream;
       chunksRef.current = [];
       const mime = pickMime();
-      const recorder = new MediaRecorder(
-        stream,
-        mime ? { mimeType: mime } : undefined,
-      );
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      } catch {
+        recorder = new MediaRecorder(stream);
+      }
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) chunksRef.current.push(event.data);
       };
-      recorder.start(250);
+      recorder.onerror = () => {
+        if (!aliveRef.current || finishingRef.current) return;
+        recRef.current = null;
+        stopTracks();
+        setPhase("idle");
+        setError("The recording stopped. Tap Record and try again.");
+      };
+      recorder.start();
       recRef.current = recorder;
-
-      try {
-        const ctx = new AudioContext();
-        ctxRef.current = ctx;
-        if (ctx.state === "suspended") await ctx.resume();
-        const source = ctx.createMediaStreamSource(stream);
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 1024;
-        source.connect(analyser);
-        analyserRef.current = analyser;
-      } catch {
-        analyserRef.current = null;
-      }
 
       const now = Date.now();
       startedAtRef.current = now;
@@ -188,6 +238,19 @@ export function useRecorder(onAutoSave: (take: Take) => void) {
       setLevel(0);
       setPhase("recording");
 
+      try {
+        const ctx = audioCtx ?? new AudioContext();
+        ctxRef.current = ctx;
+        if (ctx.state === "suspended") void ctx.resume();
+        const source = ctx.createMediaStreamSource(stream.clone());
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        source.connect(analyser);
+        analyserRef.current = analyser;
+      } catch {
+        analyserRef.current = null;
+      }
+
       timerRef.current = window.setInterval(() => {
         if (recorder.state !== "recording" || finishingRef.current) return;
         const tick = Date.now();
@@ -195,7 +258,13 @@ export function useRecorder(onAutoSave: (take: Take) => void) {
         const rms = readRms();
         levelRef.current = rms > levelRef.current ? rms : levelRef.current * 0.82;
         setLevel(Math.min(1, levelRef.current * 14));
-        if (rms > SPEECH_RMS) {
+        const meterDeaf = !analyserRef.current || ctxRef.current?.state === "suspended";
+        if (meterDeaf) {
+          if (!heardRef.current && tick - startedAtRef.current > 1000) {
+            heardRef.current = true;
+            setHeard(true);
+          }
+        } else if (rms > SPEECH_RMS) {
           lastVoiceRef.current = tick;
           if (!heardRef.current) {
             heardRef.current = true;
@@ -222,6 +291,11 @@ export function useRecorder(onAutoSave: (take: Take) => void) {
           });
         }
       }, 120);
+    } catch {
+      stopTracks();
+      recRef.current = null;
+      setPhase("idle");
+      setError("This phone could not start recording. Please press Record again.");
     } finally {
       startingRef.current = false;
     }
@@ -276,6 +350,8 @@ export function useRecorder(onAutoSave: (take: Take) => void) {
     heard,
     silencePrompt,
     error,
+    blocked,
+    claim,
     clearError: () => setError(null),
     start,
     finish,

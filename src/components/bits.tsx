@@ -87,22 +87,56 @@ function britishVoice(): SpeechSynthesisVoice | null {
   );
 }
 
-export function speak(text: string) {
-  if (typeof window === "undefined" || !window.speechSynthesis) return;
-  const say = () => {
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-GB";
-    utterance.rate = 0.92;
-    const voice = britishVoice();
-    if (voice) utterance.voice = voice;
-    window.speechSynthesis.speak(utterance);
+if (typeof window !== "undefined" && window.speechSynthesis) {
+  window.speechSynthesis.getVoices();
+  window.speechSynthesis.addEventListener("voiceschanged", () => {
+    window.speechSynthesis.getVoices();
+  });
+}
+
+export function speak(
+  text: string,
+  hooks?: { onStart?: () => void; onFail?: () => void },
+) {
+  if (typeof window === "undefined" || !window.speechSynthesis) {
+    hooks?.onFail?.();
+    return;
+  }
+  const synth = window.speechSynthesis;
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "en-GB";
+  utterance.rate = 0.92;
+  const voice = britishVoice();
+  if (voice) utterance.voice = voice;
+  let settled = false;
+  utterance.onstart = () => {
+    settled = true;
+    hooks?.onStart?.();
   };
-  if (window.speechSynthesis.getVoices().length === 0) {
-    window.speechSynthesis.onvoiceschanged = () => {
-      window.speechSynthesis.onvoiceschanged = null;
-      say();
-    };
+  utterance.onerror = (event) => {
+    if (event.error === "interrupted" || event.error === "canceled") return;
+    settled = true;
+    hooks?.onFail?.();
+  };
+  const say = () => {
+    try {
+      synth.resume();
+      synth.speak(utterance);
+    } catch {
+      settled = true;
+      hooks?.onFail?.();
+      return;
+    }
+    window.setTimeout(() => {
+      if (synth.paused) synth.resume();
+      if (!settled && !synth.speaking && !synth.pending) hooks?.onFail?.();
+    }, 700);
+  };
+  // A phone only speaks if this runs inside the tap. Waiting for voices
+  // drops the tap, and cancel() in the same moment swallows the words.
+  if (synth.speaking || synth.pending) {
+    synth.cancel();
+    window.setTimeout(say, 50);
     return;
   }
   say();

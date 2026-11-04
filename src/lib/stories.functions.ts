@@ -113,6 +113,15 @@ export const loadLibraryFn = createServerFn({ method: "GET" })
         on conflict (user_id) do nothing
       `;
     }
+    const jaunty = SEED_QUESTIONS.find((question) => question.id === "play14");
+    if (jaunty) {
+      await sql`
+        update questions set text = ${jaunty.text}
+        where user_id = ${userId}
+          and id = 'play14'
+          and text = 'Did you play with Tony or with Tex, or with someone else who has stayed with you? Tell me about working with them.'
+      `;
+    }
     const questions = await sql<QuestionRow>`
       select id, text, sort_order, image_ids from questions
       where user_id = ${userId}
@@ -280,10 +289,18 @@ export const saveMemoryFn = createServerFn({ method: "POST" })
     }) => input,
   )
   .handler(async ({ context, data }) => {
-    if (!data.audioBase64 || data.audioBase64.length > 12_000_000) {
+    if (!data.audioBase64) {
       throw new Error("Recording could not be sent");
     }
-    const transcript = await transcribe(data.audioBase64, data.mime);
+    if (data.audioBase64.length > 12_000_000) {
+      throw new Error("This recording is too long to send.");
+    }
+    let transcript: string | null = null;
+    try {
+      transcript = await transcribe(data.audioBase64, data.mime);
+    } catch {
+      transcript = null;
+    }
     const { getSql } = await import("@/lib/db");
     const sql = await getSql();
     await sql.query(
