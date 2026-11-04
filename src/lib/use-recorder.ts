@@ -28,8 +28,8 @@ export function micMessage(err: unknown): string {
       ? String((err as { message: string }).message)
       : "";
   if (name === "NotAllowedError" || name === "SecurityError") {
-    if (/AVAudioSession|capture device/i.test(detail)) {
-      return "The iPhone could not open the microphone. Close Safari completely, open it again, and tap Record.";
+    if (/not allowed by the user agent or the platform/i.test(detail)) {
+      return "The iPhone has switched the microphone off for Safari itself. Open Settings, tap Privacy & Security, tap Microphone, and switch Safari on. Then come back and tap Record.";
     }
     return detail
       ? `Safari did not ask. ${detail}`
